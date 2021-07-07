@@ -25,9 +25,12 @@ extern "C" {
 // compressed sparse row (CSR) format with a dense vector, referred to as the
 // source vector, to produce another dense vector, called the destination
 // vector.
-__global__ void spmv_csr_kernel(
-    int num_rows, int num_columns, int num_nonzeros,
-    csr_matrix_t *csr, double *x, double *y)
+__global__ void spmv_csr_kernel(const int num_rows,
+                                const int num_columns,
+                                const int num_nonzeros,
+                                const csr_matrix_t *csr,
+                                const double *x,
+                                double *y)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_rows) return;
@@ -38,7 +41,12 @@ __global__ void spmv_csr_kernel(
     y[i] += z;
 }
 
-int benchmark_csr(matrix_market_t *mm, int num_rows, int num_columns, int num_nonzeros, double *x, double *y) {
+int benchmark_csr(matrix_market_t *mm,
+                  const int num_rows,
+                  const int num_columns,
+                  const int num_nonzeros,
+                  const double *x,
+                  double *y) {
     int err;
     struct timespec start_time, end_time;
 
@@ -58,12 +66,12 @@ int benchmark_csr(matrix_market_t *mm, int num_rows, int num_columns, int num_no
     if (err) return err;
 
     // Allocate device arrays
-    HIP_CHECK(hipMalloc((void **)&d_csr,                           1 * sizeof(csr_matrix_t)));
-    HIP_CHECK(hipMalloc((void **)&d_csr->row_ptr,       (num_rows+1) * sizeof(int)));
-    HIP_CHECK(hipMalloc((void **)&d_csr->column_indices,num_nonzeros * sizeof(int)));
-    HIP_CHECK(hipMalloc((void **)&d_csr->values,        num_nonzeros * sizeof(double)));
-    HIP_CHECK(hipMalloc((void **)&d_x,                  num_columns  * sizeof(double)));
-    HIP_CHECK(hipMalloc((void **)&d_y,                  num_rows     * sizeof(double)));
+    HIP_CHECK(hipMalloc((void **)&d_csr,                            1 * sizeof(csr_matrix_t)));
+    HIP_CHECK(hipMalloc((void **)&d_csr->row_ptr,        (num_rows+1) * sizeof(int)));
+    HIP_CHECK(hipMalloc((void **)&d_csr->column_indices, num_nonzeros * sizeof(int)));
+    HIP_CHECK(hipMalloc((void **)&d_csr->values,         num_nonzeros * sizeof(double)));
+    HIP_CHECK(hipMalloc((void **)&d_x,                   num_columns  * sizeof(double)));
+    HIP_CHECK(hipMalloc((void **)&d_y,                   num_rows     * sizeof(double)));
 
     // Transfer data to device
     HIP_CHECK(hipMemcpy(d_csr->row_ptr,       csr.row_ptr,        (num_rows+1) * sizeof(int),    hipMemcpyHostToDevice));
@@ -104,16 +112,19 @@ int benchmark_csr(matrix_market_t *mm, int num_rows, int num_columns, int num_no
     return 1;
 }
 
-//
 // `spmv_ellpack_kernel()` computes the multiplication of a sparse vector in the
 // ELLPACK format with a dense vector, referred to as the source vector, to
 // produce another dense vector, called the destination vector.
 //
 // It is assumed that the sparse matrix has a maximum of `max_nonzeros_per_row`
 // nonzeros per row
-__global__ void spmv_ellpack_kernel(
-    int num_rows, int num_columns, int num_nonzeros, int max_nonzeros_per_row,
-    ellpack_matrix_t *ellpack, double *x, double *y)
+__global__ void spmv_ellpack_kernel(const int num_rows,
+                                    const int num_columns,
+                                    const int num_nonzeros,
+                                    const int max_nonzeros_per_row,
+                                    const ellpack_matrix_t *ellpack,
+                                    const double *x,
+                                    double *y)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
@@ -128,7 +139,14 @@ __global__ void spmv_ellpack_kernel(
     atomicAdd(&y[i], ellpack->data[i][j] * x[col_index]);
 }
 
-int benchmark_ellpack(matrix_market_t *mm, int num_rows, int num_columns, int num_nonzeros, int max_nonzeros_per_row, double *x, double *y) {
+int benchmark_ellpack(matrix_market_t *mm,
+                      const int num_rows,
+                      const int num_columns,
+                      const int num_nonzeros,
+                      const int max_nonzeros_per_row,
+                      const double *x,
+                      double *y)
+{
     int err;
     struct timespec start_time, end_time;
 
@@ -172,6 +190,7 @@ int benchmark_ellpack(matrix_market_t *mm, int num_rows, int num_columns, int nu
     HIP_CHECK(hipMemcpy(d_y, y, num_rows     * sizeof(double), hipMemcpyHostToDevice));
 
     // Setup work dimensions
+    // Each block (most likely) works on one whole row.
     dim3 block_size(1024);
     dim3 grid_size((max_nonzeros_per_row + block_size.x - 1)/block_size.x, num_rows);
 
@@ -211,6 +230,15 @@ int main(int argc, char *argv[])
     int err;
 
     int num_rows, num_columns, num_nonzeros;
+    int max_nonzeros_per_row = 4;
+    char *matrix_market_path = NULL;
+
+    parse_args(argc, argv, &matrix_market_path, &max_nonzeros_per_row);
+
+    if (matrix_market_path = NULL) {
+        fprintf(stderr, "Usage: %s FILE\n", argv[0]);
+        return EXIT_FAILURE;
+    }
 
     // Struct to hold the matrix read in COO form.
     matrix_market_t mm;
@@ -218,18 +246,20 @@ int main(int argc, char *argv[])
     // Host side in/out vectors
     double *x, *y;
 
-
-    // The only argument should be an .mtx file
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s FILE\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-
     // Read in the sparse matrix in COO form
     err = mm_read_unsymmetric_sparse(
-        argv[1], &num_rows, &num_columns, &num_nonzeros,
+        matrix_market_path, &num_rows, &num_columns, &num_nonzeros,
         &mm.values, &mm.row_indices, &mm.column_indices);
     if (err) return err;
+
+    if (max_nonzeros_per_row > num_columns) {
+        fprintf(stderr,
+                "Maximum number of nonzero elements per row specified by -m (%d) "
+                "is larger than the number of columns (%d) in %s\n",
+                max_nonzeros_per_row, num_columns, matrix_market_path);
+        free_matrix_market(mm);
+        exit(1);
+    }
 
 
     // Generate some sparse vector to use as the source vector for a

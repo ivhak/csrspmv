@@ -7,6 +7,7 @@
 #include "csr.h"
 #include "matrix_market.h"
 #include "ellpack.h"
+#include "util.h"
 
 // `spmv_csr()` computes the multiplication of a sparse vector in the
 // compressed sparse row (CSR) format with a dense vector, referred to as the
@@ -53,6 +54,15 @@ int main(int argc, char *argv[])
     int err;
 
     int num_rows, num_columns, num_nonzeros;
+    int max_nonzeros_per_row = 4;
+    char *matrix_market_path = NULL;
+
+    parse_args(argc, argv, &matrix_market_path, &max_nonzeros_per_row);
+
+    if (matrix_market_path == NULL) {
+        fprintf(stderr, "Usage: %s FILE\n", argv[0]);
+        return EXIT_FAILURE;
+    }
 
     // Struct to hold the matrix read in COO form.
     matrix_market_t mm;
@@ -68,28 +78,33 @@ int main(int argc, char *argv[])
     // `y` is the dense vector holding the result
     double *x, *y;
 
-    // The only argument should be an .mtx file
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s FILE\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-
     // Read in the sparse matrix in COO form
     err = mm_read_unsymmetric_sparse(
-        argv[1], &num_rows, &num_columns, &num_nonzeros,
+        matrix_market_path, &num_rows, &num_columns, &num_nonzeros,
         &mm.values, &mm.row_indices, &mm.column_indices);
 
     if (err) return err;
 
+    if (max_nonzeros_per_row > num_columns) {
+        fprintf(stderr,
+                "Maximum number of nonzero elements per row specified by -m (%d) "
+                "is larger than the number of columns (%d) in %s\n",
+                max_nonzeros_per_row, num_columns, matrix_market_path);
+        free_matrix_market(mm);
+        exit(1);
+    }
+
     // Convert from COO to CSR
     err = csr_matrix_from_matrix_market(num_rows, num_columns, num_nonzeros, &mm, &csr);
-    // err = ellpack_matrix_from_matrix_market(num_rows, num_columns, num_nonzeros, 4, &mm, &ellpack);
     if (err) return err;
 
-#if 0
+    err = ellpack_matrix_from_matrix_market(num_rows, num_columns, num_nonzeros, max_nonzeros_per_row, &mm, &ellpack);
+    if (err) return err;
+
+#if 1
     print_matrix_market(mm, num_nonzeros);
     print_csr_matrix(csr, num_rows, num_nonzeros);
-    print_ellpack_matrix(ellpack, num_rows, 4);
+    print_ellpack_matrix(ellpack, num_rows, max_nonzeros_per_row);
 #endif
     free_matrix_market(mm);
 
@@ -137,7 +152,7 @@ int main(int argc, char *argv[])
     for (int i = 0; i < num_rows; i++)
         y[i] = 0.;
 
-    spmv_ellpack(num_rows, num_columns, num_nonzeros, 4, &ellpack, x, y);
+    spmv_ellpack(num_rows, num_columns, num_nonzeros, max_nonzeros_per_row, &ellpack, x, y);
 
 #if 1
     printf("ELLPACK\n");
