@@ -13,6 +13,23 @@ void free_csr_matrix(csr_matrix_t csr)
     free(csr.values);
 }
 
+void print_csr_matrix(csr_matrix_t csr, int num_rows, int num_nonzeros)
+{
+    printf("CSR\n");
+    printf("values:\n");
+    for (int i = 0; i < num_nonzeros; i++)
+        printf(" %6.6lf", csr.values[i]);
+
+    printf("\nrow_ptr:\n");
+    for (int i = 0; i < num_rows+1; i++)
+        printf(" %d", csr.row_ptr[i]);
+    printf("\ncolumn_indices:\n");
+    for (int i = 0; i < num_nonzeros; i++)
+        printf(" %d", csr.column_indices[i]);
+    printf("\n");
+
+}
+
 // `csr_matrix_from_matrix_market()` converts a matrix in the
 // coordinate (COO) format, that is used in the Matrix Market file
 // format, to a sparse matrix in the compressed sparse row (CSR)

@@ -6,6 +6,7 @@
 #include "mmio.h"
 #include "csr.h"
 #include "matrix_market.h"
+#include "ellpack.h"
 
 // `spmv_csr()` computes the multiplication of a sparse vector in the
 // compressed sparse row (CSR) format with a dense vector, referred to as the
@@ -23,6 +24,29 @@ void spmv_csr(
         y[i] += z;
     }
 }
+// `spmv_ellpack()` computes the multiplication of a sparse vector in the
+// ELLPACK format with a dense vector, referred to as the source vector, to
+// produce another dense vector, called the destination vector.
+//
+// It is assumed that the sparse matrix has a maximum of `max_nonzeros_per_row`
+// nonzeros per row
+void spmv_ellpack(
+    int num_rows, int num_columns, int num_nonzeros, int max_nonzeros_per_row,
+    ellpack_matrix_t *ellpack, double *x, double *y)
+{
+    for (int i = 0; i < num_rows; i++) {
+        double z = 0.0;
+        for (int j = 0; j < max_nonzeros_per_row; j++) {
+
+            size_t col_index = ellpack->indices[i][j];
+            if (col_index == ELLPACK_SENTINEL_INDEX)
+                break;
+
+            z += ellpack->data[i][j] * x[col_index];
+        }
+        y[i] += z;
+    }
+}
 
 int main(int argc, char *argv[])
 {
@@ -36,6 +60,9 @@ int main(int argc, char *argv[])
     // Struct to hold the matrix as sparse vector in the compressed sparse row
     // (CSR) format.
     csr_matrix_t csr;
+    //
+    // Struct to hold the matrix as sparse vector in the ELLPACK format.
+    ellpack_matrix_t ellpack;
 
     // `x` is the dense vector multiplied with the sparse matrix
     // `y` is the dense vector holding the result
@@ -56,9 +83,15 @@ int main(int argc, char *argv[])
 
     // Convert from COO to CSR
     err = csr_matrix_from_matrix_market(num_rows, num_columns, num_nonzeros, &mm, &csr);
-    free_matrix_market(mm);
-
+    // err = ellpack_matrix_from_matrix_market(num_rows, num_columns, num_nonzeros, 4, &mm, &ellpack);
     if (err) return err;
+
+#if 0
+    print_matrix_market(mm, num_nonzeros);
+    print_csr_matrix(csr, num_rows, num_nonzeros);
+    print_ellpack_matrix(ellpack, num_rows, 4);
+#endif
+    free_matrix_market(mm);
 
     // Generate some sparse vector to use as the source vector for a
     // matrix-vector multiplication.
@@ -94,8 +127,22 @@ int main(int argc, char *argv[])
     spmv_csr(num_rows, num_columns, num_nonzeros, &csr, x, y);
 
 #if 1
+    printf("CSR\n");
     // Write the results to standard output.
-    for (int i = 0; i < num_rows-1; i++)
+    for (int i = 0; i < num_rows; i++)
+        fprintf(stdout, "%12g\n", y[i]);
+#endif
+
+#pragma omp parallel for
+    for (int i = 0; i < num_rows; i++)
+        y[i] = 0.;
+
+    spmv_ellpack(num_rows, num_columns, num_nonzeros, 4, &ellpack, x, y);
+
+#if 1
+    printf("ELLPACK\n");
+    // Write the results to standard output.
+    for (int i = 0; i < num_rows; i++)
         fprintf(stdout, "%12g\n", y[i]);
 #endif
 

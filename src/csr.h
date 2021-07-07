@@ -10,6 +10,8 @@ typedef struct {
 
 void free_csr_matrix(csr_matrix_t csr);
 
+void print_csr_matrix(csr_matrix_t csr, int num_rows, int num_nonzeros);
+
 int csr_matrix_from_matrix_market(
     int num_rows,
     int num_columns,
