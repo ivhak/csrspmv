@@ -35,38 +35,35 @@ void print_ellpack_matrix(ellpack_matrix_t ellpack, int num_rows, int max_nonzer
 // format, to a sparse matrix in the ELLPACK storage format.
 int ellpack_matrix_from_matrix_market(ellpack_matrix_t *ellpack,
                                       const matrix_market_t *mm,
-                                      const int num_rows,
-                                      const int num_columns,
-                                      const int num_nonzeros,
-                                      const int max_nonzeros_per_row)
+                                      const matrix_info_t mi)
 {
 
-    if (max_nonzeros_per_row > num_columns) return EINVAL;
+    if (mi.max_nonzeros_per_row > mi.num_columns) return EINVAL;
 
-    double **data = malloc(num_rows*sizeof(double *));
-    for (int i = 0; i < num_rows; i++)
-        data[i] = malloc(max_nonzeros_per_row*sizeof(double));
+    double **data = malloc(mi.num_rows*sizeof(double *));
+    for (int i = 0; i < mi.num_rows; i++)
+        data[i] = malloc(mi.max_nonzeros_per_row*sizeof(double));
 
-    int **indices = malloc(num_rows*sizeof(int *));
-    for (int i = 0; i < num_rows; i++)
-        indices[i] = malloc(max_nonzeros_per_row*sizeof(int));
+    int **indices = malloc(mi.num_rows*sizeof(int *));
+    for (int i = 0; i < mi.num_rows; i++)
+        indices[i] = malloc(mi.max_nonzeros_per_row*sizeof(int));
 
     // Preset both indices and data to the sentinel values.
 #pragma omp parallel for
-    for (int i = 0; i < num_rows; i++)
-        for (int j = 0; j < max_nonzeros_per_row; j++) {
+    for (int i = 0; i < mi.num_rows; i++)
+        for (int j = 0; j < mi.max_nonzeros_per_row; j++) {
             indices[i][j] = ELLPACK_SENTINEL_INDEX;
             data[i][j]    = ELLPACK_SENTINEL_VALUE;
         }
 
 #pragma omp for
-    for (int i = 0; i < num_nonzeros; i++) {
+    for (int i = 0; i < mi.num_nonzeros; i++) {
         size_t row = mm->row_indices[i];
 
         // Find the first column not used, i.e., the first column containing a
         // sentinel value.
         int col = 0;
-        while (indices[row][col] != ELLPACK_SENTINEL_INDEX && col < max_nonzeros_per_row)
+        while (indices[row][col] != ELLPACK_SENTINEL_INDEX && col < mi.max_nonzeros_per_row)
             col++;
 
         indices[row][col] = mm->column_indices[i];

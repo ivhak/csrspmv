@@ -10,15 +10,17 @@ inline void set_vector_double(double *v, int c, double val)
         v[i] = val;
 }
 
-void parse_args(int argc, char *argv[], char **matrix_market_path, int *max_nonzeros_per_row)
+void parse_args(int argc, char *argv[], char **matrix_market_path, int *max_nonzeros_per_row, int *verbose)
 {
     int opt;
     extern int optind;
     extern char *optarg;
-    while ((opt=getopt(argc, argv, "m:")) != -1) {
+    while ((opt=getopt(argc, argv, "m:v")) != -1) {
         switch (opt) {
             case 'm':
                 *max_nonzeros_per_row = atoi(optarg);
+            case 'v':
+                *verbose = 1;
             default:
                 break;
         }
@@ -26,9 +28,9 @@ void parse_args(int argc, char *argv[], char **matrix_market_path, int *max_nonz
     *matrix_market_path=argv[optind];
 }
 
-void log_execution(const char *matrix_format, int num_rows, int num_cols, int num_nonzeros, float time)
+void log_execution(const char *matrix_format, matrix_info_t mi, float time)
 {
-    printf("%s: %d rows %d columns, %d non-zero elements: %.6f seconds\n", matrix_format, num_rows, num_cols, num_nonzeros, time);
+    printf("%-14s  %d rows %d columns %d non-zero elements: %.6f seconds\n", matrix_format, mi.num_rows, mi.num_columns, mi.num_nonzeros, time);
 }
 
 float time_spent(struct timespec t0, struct timespec t1)

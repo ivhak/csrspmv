@@ -1,10 +1,13 @@
 #ifndef ELLPACK_H
 #define ELLPACK_H
 
+#include <float.h>
+#include <limits.h>
 #include "matrix_market.h"
+#include "spmv.h"
 
-#define ELLPACK_SENTINEL_INDEX -100000000
-#define ELLPACK_SENTINEL_VALUE -100000000.0
+#define ELLPACK_SENTINEL_INDEX INT_MAX
+#define ELLPACK_SENTINEL_VALUE DBL_MAX
 
 typedef struct {
     int **indices;
@@ -15,8 +18,5 @@ void print_ellpack_matrix(ellpack_matrix_t ellpack, int num_rows, int max_nonzer
 
 int ellpack_matrix_from_matrix_market(ellpack_matrix_t *ellpack,
                                       const matrix_market_t *mm,
-                                      const int num_rows,
-                                      const int num_columns,
-                                      const int num_nonzeros,
-                                      const int max_nonzeros_per_row);
+                                      const matrix_info_t mi);
 #endif

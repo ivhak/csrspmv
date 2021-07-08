@@ -30,7 +30,7 @@ C_SRC := src/mmio.c src/csr.c src/matrix_market.c src/ellpack.c src/util.c
 C_OBJ := $(patsubst %.c,%.o,$(C_SRC))
 
 
-$(C_OBJ): %.o: %.c
+$(C_OBJ): %.o: %.c %.h
 	$(CC) -c $(CFLAGS) $(INCLUDES) $< -o $@
 
 spmv-hip: ${C_OBJ} src/spmv.hip.cpp
