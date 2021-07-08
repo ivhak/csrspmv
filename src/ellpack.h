@@ -13,11 +13,10 @@ typedef struct {
 
 void print_ellpack_matrix(ellpack_matrix_t ellpack, int num_rows, int max_nonzeros_per_row);
 
-int ellpack_matrix_from_matrix_market(
-    int num_rows,
-    int num_columns,
-    int num_nonzeros,
-    int max_nonzeros_per_row,
-    const matrix_market_t *mm,
-    ellpack_matrix_t *ellpack);
+int ellpack_matrix_from_matrix_market(ellpack_matrix_t *ellpack,
+                                      const matrix_market_t *mm,
+                                      const int num_rows,
+                                      const int num_columns,
+                                      const int num_nonzeros,
+                                      const int max_nonzeros_per_row);
 #endif

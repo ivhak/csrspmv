@@ -1,3 +1,4 @@
 src/*.o
 spmv
 spmv_hip
+sync.sh

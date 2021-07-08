@@ -1,6 +1,7 @@
-#include "ellpack.h"
 #include <errno.h>
 #include <stdio.h>
+
+#include "ellpack.h"
 
 void print_ellpack_matrix(ellpack_matrix_t ellpack, int num_rows, int max_nonzeros_per_row)
 {
@@ -29,13 +30,15 @@ void print_ellpack_matrix(ellpack_matrix_t ellpack, int num_rows, int max_nonzer
 
 }
 
-int ellpack_matrix_from_matrix_market(
-    int num_rows,
-    int num_columns,
-    int num_nonzeros,
-    int max_nonzeros_per_row,
-    const matrix_market_t *mm,
-    ellpack_matrix_t *ellpack)
+// `ellpack_matrix_from_matrix_market()` converts a matrix in the
+// coordinate (COO) format, that is used in the Matrix Market file
+// format, to a sparse matrix in the ELLPACK storage format.
+int ellpack_matrix_from_matrix_market(ellpack_matrix_t *ellpack,
+                                      const matrix_market_t *mm,
+                                      const int num_rows,
+                                      const int num_columns,
+                                      const int num_nonzeros,
+                                      const int max_nonzeros_per_row)
 {
 
     if (max_nonzeros_per_row > num_columns) return EINVAL;
@@ -48,6 +51,7 @@ int ellpack_matrix_from_matrix_market(
     for (int i = 0; i < num_rows; i++)
         indices[i] = malloc(max_nonzeros_per_row*sizeof(int));
 
+    // Preset both indices and data to the sentinel values.
 #pragma omp parallel for
     for (int i = 0; i < num_rows; i++)
         for (int j = 0; j < max_nonzeros_per_row; j++) {
@@ -59,8 +63,10 @@ int ellpack_matrix_from_matrix_market(
     for (int i = 0; i < num_nonzeros; i++) {
         size_t row = mm->row_indices[i];
 
+        // Find the first column not used, i.e., the first column containing a
+        // sentinel value.
         int col = 0;
-        while (indices[row][col] != ELLPACK_SENTINEL_INDEX)
+        while (indices[row][col] != ELLPACK_SENTINEL_INDEX && col < max_nonzeros_per_row)
             col++;
 
         indices[row][col] = mm->column_indices[i];

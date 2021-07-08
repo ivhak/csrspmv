@@ -12,11 +12,10 @@ void free_csr_matrix(csr_matrix_t csr);
 
 void print_csr_matrix(csr_matrix_t csr, int num_rows, int num_nonzeros);
 
-int csr_matrix_from_matrix_market(
-    int num_rows,
-    int num_columns,
-    int num_nonzeros,
-    const matrix_market_t *mm,
-    csr_matrix_t *csr);
+int csr_matrix_from_matrix_market(csr_matrix_t *csr,
+                                  const matrix_market_t *mm,
+                                  const int num_rows,
+                                  const int num_columns,
+                                  const int num_nonzeros);
 
 #endif

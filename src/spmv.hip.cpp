@@ -62,7 +62,7 @@ int benchmark_csr(matrix_market_t *mm,
     double *d_x, *d_y;
 
     // Convert from COO to CSR
-    err = csr_matrix_from_matrix_market(num_rows, num_columns, num_nonzeros, mm, &csr);
+    err = csr_matrix_from_matrix_market(&csr, mm, num_rows, num_columns, num_nonzeros);
     if (err) return err;
 
     // Allocate device arrays
@@ -162,7 +162,7 @@ int benchmark_ellpack(matrix_market_t *mm,
     double *d_x, *d_y;
 
     // Convert from COO to ELLPACK
-    err = ellpack_matrix_from_matrix_market(num_rows, num_columns, num_nonzeros, max_nonzeros_per_row, mm, &ellpack);
+    err = ellpack_matrix_from_matrix_market(&ellpack, mm, num_rows, num_columns, num_nonzeros, max_nonzeros_per_row);
     if (err) return err;
 
     // Allocate device arrays
@@ -235,7 +235,7 @@ int main(int argc, char *argv[])
 
     parse_args(argc, argv, &matrix_market_path, &max_nonzeros_per_row);
 
-    if (matrix_market_path = NULL) {
+    if (matrix_market_path == NULL) {
         fprintf(stderr, "Usage: %s FILE\n", argv[0]);
         return EXIT_FAILURE;
     }
@@ -269,10 +269,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "%s(): %s\n", __FUNCTION__, strerror(errno));
         return errno;
     }
-
-#pragma omp parallel for
-    for (int j = 0; j < num_columns; j++)
-        x[j] = 1.;
+    set_vector_double(x, num_columns, 1.);
 
     // Allocate space for the result vector
     y = (double *) malloc(num_rows * sizeof(double));
@@ -282,16 +279,14 @@ int main(int argc, char *argv[])
         return errno;
     }
 
-#pragma omp parallel for
-    for (int i = 0; i < num_rows; i++)
-        y[i] = 0.;
+    // Zero out the result vector
+    set_vector_double(y, num_rows, 0.);
 
     // Run CSR benchmark
     benchmark_csr(&mm, num_rows, num_columns, num_nonzeros, x, y);
 
-#pragma omp parallel for
-    for (int i = 0; i < num_rows; i++)
-        y[i] = 0.;
+    // Zero out the result vector
+    set_vector_double(y, num_rows, 0.);
 
     // Run ELLPACK benchmark
     benchmark_ellpack(&mm, num_rows, num_columns, num_nonzeros, 4, x, y);

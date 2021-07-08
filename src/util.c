@@ -3,6 +3,12 @@
 #include <stdlib.h>
 #include <getopt.h>
 
+inline void set_vector_double(double *v, int c, double val)
+{
+#pragma omp parallel for
+    for (int i = 0; i < c; i++)
+        v[i] = val;
+}
 
 void parse_args(int argc, char *argv[], char **matrix_market_path, int *max_nonzeros_per_row)
 {

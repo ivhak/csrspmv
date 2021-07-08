@@ -13,9 +13,12 @@
 // compressed sparse row (CSR) format with a dense vector, referred to as the
 // source vector, to produce another dense vector, called the destination
 // vector.
-void spmv_csr(
-    int num_rows, int num_columns, int num_nonzeros,
-    csr_matrix_t *csr, double *x, double *y)
+void spmv_csr(const int num_rows,
+              const int num_columns,
+              const int num_nonzeros,
+              const csr_matrix_t *csr,
+              const double *x,
+              double *y)
 {
 #pragma omp for
     for (int i = 0; i < num_rows; i++) {
@@ -25,15 +28,20 @@ void spmv_csr(
         y[i] += z;
     }
 }
+
 // `spmv_ellpack()` computes the multiplication of a sparse vector in the
 // ELLPACK format with a dense vector, referred to as the source vector, to
 // produce another dense vector, called the destination vector.
 //
 // It is assumed that the sparse matrix has a maximum of `max_nonzeros_per_row`
 // nonzeros per row
-void spmv_ellpack(
-    int num_rows, int num_columns, int num_nonzeros, int max_nonzeros_per_row,
-    ellpack_matrix_t *ellpack, double *x, double *y)
+void spmv_ellpack(const int num_rows,
+                  const int num_columns,
+                  const int num_nonzeros,
+                  const int max_nonzeros_per_row,
+                  const ellpack_matrix_t *ellpack,
+                  const double *x,
+                  double *y)
 {
     for (int i = 0; i < num_rows; i++) {
         double z = 0.0;
@@ -95,10 +103,10 @@ int main(int argc, char *argv[])
     }
 
     // Convert from COO to CSR
-    err = csr_matrix_from_matrix_market(num_rows, num_columns, num_nonzeros, &mm, &csr);
+    err = csr_matrix_from_matrix_market(&csr, &mm, num_rows, num_columns, num_nonzeros);
     if (err) return err;
 
-    err = ellpack_matrix_from_matrix_market(num_rows, num_columns, num_nonzeros, max_nonzeros_per_row, &mm, &ellpack);
+    err = ellpack_matrix_from_matrix_market(&ellpack, &mm, num_rows, num_columns, num_nonzeros, max_nonzeros_per_row);
     if (err) return err;
 
 #if 1
@@ -118,10 +126,7 @@ int main(int argc, char *argv[])
         free(csr.column_indices);
         return errno;
     }
-
-#pragma omp parallel for
-    for (int j = 0; j < num_columns; j++)
-        x[j] = 1.;
+    set_vector_double(x, num_columns, 1.);
 
     // Allocate space for the result vector
     y = (double *) malloc(num_rows * sizeof(double));
@@ -134,9 +139,8 @@ int main(int argc, char *argv[])
         return errno;
     }
 
-#pragma omp parallel for
-    for (int i = 0; i < num_rows; i++)
-        y[i] = 0.;
+    // Zero out the result vector
+    set_vector_double(y, num_rows, 0.);
 
     // Compute the sparse matrix-vector multiplication.
     spmv_csr(num_rows, num_columns, num_nonzeros, &csr, x, y);
@@ -148,10 +152,8 @@ int main(int argc, char *argv[])
         fprintf(stdout, "%12g\n", y[i]);
 #endif
 
-#pragma omp parallel for
-    for (int i = 0; i < num_rows; i++)
-        y[i] = 0.;
-
+    // Zero out the result vector
+    set_vector_double(y, num_rows, 0.);
     spmv_ellpack(num_rows, num_columns, num_nonzeros, max_nonzeros_per_row, &ellpack, x, y);
 
 #if 1

@@ -3,7 +3,7 @@
 ## compressed sparse row (CSR) format.
 ##
 
-hip:    spmv_hip
+hip:    spmv-hip
 serial: spmv
 
 clean: $(clean-programs)
@@ -33,11 +33,11 @@ C_OBJ := $(patsubst %.c,%.o,$(C_SRC))
 $(C_OBJ): %.o: %.c
 	$(CC) -c $(CFLAGS) $(INCLUDES) $< -o $@
 
-spmv_hip: ${C_OBJ} src/spmv.hip.cpp
+spmv-hip: ${C_OBJ} src/spmv.hip.cpp
 	$(HIPCC) $(CFLAGS) $(INCLUDES) $^ $(LDFLAGS) -o $@
 
 spmv: ${C_OBJ} src/spmv.c
 	$(CC) $(CFLAGS) $(INCLUDES) $^ $(LDFLAGS) -o $@
 
 clean:
-	$(RM) spmv_hip $(C_OBJ)
+	$(RM) spmv-hip spmv $(C_OBJ)

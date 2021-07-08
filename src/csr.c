@@ -35,11 +35,11 @@ void print_csr_matrix(csr_matrix_t csr, int num_rows, int num_nonzeros)
 // format, to a sparse matrix in the compressed sparse row (CSR)
 // storage format.
 int csr_matrix_from_matrix_market(
-    int num_rows,
-    int num_columns,
-    int num_nonzeros,
+    csr_matrix_t *csr,
     const matrix_market_t *mm,
-    csr_matrix_t *csr)
+    const int num_rows,
+    const int num_columns,
+    const int num_nonzeros)
 {
     int *row_ptr;
     int *column_indices;
