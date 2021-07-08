@@ -39,7 +39,12 @@ int main(int argc, char *argv[])
     int err;
 
     // Struct to keep track of general information about the matrix
-    matrix_info_t mi = {.max_nonzeros_per_row = 4};
+    matrix_info_t mi = {
+        .num_rows             = 0,
+        .num_columns          = 0,
+        .num_nonzeros         = 0,
+        .max_nonzeros_per_row = 4
+    };
 
     char *matrix_market_path = NULL;
 
