@@ -12,9 +12,17 @@ extern "C" {
 #include "ellpack.h"
 #include "util.h"
 #include "matrix_info.h"
+#include "args.h"
 }
 
-int verbose = 0;
+// Defualt settings
+args_t args = {
+    .verbose              = 0,
+    .format               = NO_FORMAT,
+    .matrix_market_path   = NULL,
+    .max_nonzeros_per_row = 4,
+    .benchmark_cpu        = 0
+};
 
 #define HC(command) {     \
     hipError_t status = command; \
@@ -34,6 +42,26 @@ __host__   void spmv_ellpack_serial(const matrix_info_t mi, const ellpack_matrix
 int benchmark_csr    (const matrix_market_t *mm, const matrix_info_t mi, const double *x, double *y);
 int benchmark_ellpack(const matrix_market_t *mm, const matrix_info_t mi, const double *x, double *y);
 
+void usage(FILE *stream, char *filename) {
+    fprintf(stream,
+        "Usage: %1$s [-f FORMAT] [-c] [-v] [-m NUM] [-h] INPUT_FILE\n"
+        "Options:\n"
+        "   -h         Show usage.\n\n"
+        "   -c         Run the benchmarks on the CPU as well as the GPU.\n\n"
+        "   -v         Be verbose, show the output of the SpMV calculation(s).\n\n"
+        "   -f  FORMAT Run the benchmarks using the format FORMAT, where FORMAT\n"
+        "              is either CSR or ELLPACK. More than one format can be specified\n"
+        "              by repeating the option. Defaults to CSR if no format is specified.\n\n"
+        "   -m  NUM    Sets the maximum number of nonzero values per row for the\n"
+        "              matrix in INPUT_FILE. Must be less than or equal to the\n"
+        "              number of columns in the matrix.\n\n"
+        "Example:\n\n"
+        "   Run ELLPACK on both the GPU and CPU, on the matrix in mat.mtx,\n"
+        "   which has 16 nonzeros per row:\n\n"
+        "       %1$s -f ELLPACK -m 16 -c mat.mtx\n",
+        filename);
+}
+
 int main(int argc, char *argv[])
 {
     int err;
@@ -46,12 +74,16 @@ int main(int argc, char *argv[])
         .max_nonzeros_per_row = 4
     };
 
-    char *matrix_market_path = NULL;
+    int help = 0;
+    parse_args(argc, argv, &args, &help);
 
-    parse_args(argc, argv, &matrix_market_path, &mi.max_nonzeros_per_row, &verbose);
+    if (help) {
+        usage(stdout, argv[0]);
+        return EXIT_SUCCESS;
+    }
 
-    if (matrix_market_path == NULL) {
-        fprintf(stderr, "Usage: %s FILE\n", argv[0]);
+    if (args.matrix_market_path == NULL) {
+        usage(stderr, argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -61,18 +93,26 @@ int main(int argc, char *argv[])
     // Host side in/out vectors
     double *x, *y;
 
+    if (args.format == NO_FORMAT) {
+        printf("No matrix format supplied, defaulting to CSR...\n");
+        args.format = CSR;
+    }
+
     // Read in the sparse matrix in COO form
     err = mm_read_unsymmetric_sparse(
-        matrix_market_path,
+        args.matrix_market_path,
         &mi.num_rows, &mi.num_columns, &mi.num_nonzeros,
         &mm.values, &mm.row_indices, &mm.column_indices);
     if (err) return err;
+
+    // Copy the maxmimum number of nonzeros per row into the matrix_info struct
+    mi.max_nonzeros_per_row = args.max_nonzeros_per_row;
 
     if (mi.max_nonzeros_per_row > mi.num_columns) {
         fprintf(stderr,
                 "Maximum number of nonzero elements per row specified by -m (%d) "
                 "is larger than the number of columns (%d) in %s\n",
-                mi.max_nonzeros_per_row, mi.num_columns, matrix_market_path);
+                mi.max_nonzeros_per_row, mi.num_columns, args.matrix_market_path);
         free_matrix_market(mm);
         exit(1);
     }
@@ -95,17 +135,22 @@ int main(int argc, char *argv[])
         return errno;
     }
 
-    // Zero out the result vector
-    set_vector_double(y, mi.num_rows, 0.);
 
-    // Run CSR benchmark
-    benchmark_csr(&mm, mi, x, y);
+    if (args.format & CSR) {
+        // Zero out the result vector
+        set_vector_double(y, mi.num_rows, 0.);
 
-    // Zero out the result vector
-    set_vector_double(y, mi.num_rows, 0.);
+        // Run CSR benchmark
+        benchmark_csr(&mm, mi, x, y);
+    }
 
-    // Run ELLPACK benchmark
-    benchmark_ellpack(&mm, mi, x, y);
+    if (args.format & ELLPACK) {
+        // Zero out the result vector
+        set_vector_double(y, mi.num_rows, 0.);
+
+        // Run ELLPACK benchmark
+        benchmark_ellpack(&mm, mi, x, y);
+    }
     return 0;
 }
 
@@ -203,23 +248,25 @@ int benchmark_csr(const matrix_market_t *mm,
     // Copy back the resulting vector to host.
     HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
 
-    if (verbose) {
+    if (args.verbose) {
         // Write the results to standard output.
         for (int i = 0; i < mi.num_rows; i++)
             fprintf(stdout, "%12g\n", y[i]);
     }
 
     // CPU
-    set_vector_double(y, mi.num_rows, 0.);
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-    spmv_csr_serial(mi, csr, x, y);
-    clock_gettime(CLOCK_MONOTONIC, &end_time);
-    log_execution("CSR (CPU)", mi, time_spent(start_time, end_time));
+    if (args.benchmark_cpu) {
+        set_vector_double(y, mi.num_rows, 0.);
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        spmv_csr_serial(mi, csr, x, y);
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        log_execution("CSR (CPU)", mi, time_spent(start_time, end_time));
 
-    if (verbose) {
-        // Write the results to standard output.
-        for (int i = 0; i < mi.num_rows; i++)
-            fprintf(stdout, "%12g\n", y[i]);
+        if (args.verbose) {
+            // Write the results to standard output.
+            for (int i = 0; i < mi.num_rows; i++)
+                fprintf(stdout, "%12g\n", y[i]);
+        }
     }
 
     HC(hipFree(d_csr.values));
@@ -357,7 +404,7 @@ int benchmark_ellpack(const matrix_market_t *mm,
     HC(hipMemcpy(d_x, x, mi.num_columns * sizeof(double), hipMemcpyHostToDevice));
     HC(hipMemcpy(d_y, y, mi.num_rows    * sizeof(double), hipMemcpyHostToDevice));
 
-#if 1 // One block per row
+#if 0 // One block per row
     dim3 block_size(64); // one warp per row
     dim3 grid_size((mi.max_nonzeros_per_row + block_size.x - 1)/block_size.x, mi.num_rows);
 
@@ -390,24 +437,26 @@ int benchmark_ellpack(const matrix_market_t *mm,
     // Copy back the resulting vector to host.
     HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
 
-    if (verbose) {
+    if (args.verbose) {
         // Write the results to standard output.
         for (int i = 0; i < mi.num_rows; i++)
             fprintf(stdout, "%12g\n", y[i]);
     }
 
     // CPU
-    // Zero out the result vector and rerun the benchmark on the CPU
-    set_vector_double(y, mi.num_rows, 0.);
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-    spmv_ellpack_serial(mi, ellpack, x, y);
-    clock_gettime(CLOCK_MONOTONIC, &end_time);
-    log_execution("ELLPACK (CPU)", mi, time_spent(start_time, end_time));
+    if (args.benchmark_cpu) {
+        // Zero out the result vector and rerun the benchmark on the CPU
+        set_vector_double(y, mi.num_rows, 0.);
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        spmv_ellpack_serial(mi, ellpack, x, y);
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        log_execution("ELLPACK (CPU)", mi, time_spent(start_time, end_time));
 
-    if (verbose) {
-        // Write the results to standard output.
-        for (int i = 0; i < mi.num_rows; i++)
-            fprintf(stdout, "%12g\n", y[i]);
+        if (args.verbose) {
+            // Write the results to standard output.
+            for (int i = 0; i < mi.num_rows; i++)
+                fprintf(stdout, "%12g\n", y[i]);
+        }
     }
 
     HC(hipFree(d_ellpack.data));

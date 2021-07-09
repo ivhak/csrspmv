@@ -23,7 +23,7 @@ CFLAGS += -O3
 endif
 
 
-C_SRC := src/mmio.c src/csr.c src/matrix_market.c src/ellpack.c src/util.c
+C_SRC := src/mmio.c src/csr.c src/matrix_market.c src/ellpack.c src/util.c src/args.c
 C_OBJ := $(patsubst %.c,%.o,$(C_SRC))
 
 
