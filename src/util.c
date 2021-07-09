@@ -15,12 +15,14 @@ void parse_args(int argc, char *argv[], char **matrix_market_path, int *max_nonz
     int opt;
     extern int optind;
     extern char *optarg;
-    while ((opt=getopt(argc, argv, "m:v")) != -1) {
+    while ((opt=getopt(argc, argv, "vm:")) != -1) {
         switch (opt) {
             case 'm':
                 *max_nonzeros_per_row = atoi(optarg);
+                break;
             case 'v':
                 *verbose = 1;
+                break;
             default:
                 break;
         }

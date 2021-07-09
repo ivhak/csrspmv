@@ -175,8 +175,8 @@ int benchmark_csr(const matrix_market_t *mm,
     HC(hipMalloc((void **)&d_csr.row_ptr,        (mi.num_rows+1) * sizeof(int)));
     HC(hipMalloc((void **)&d_csr.column_indices, mi.num_nonzeros * sizeof(int)));
     HC(hipMalloc((void **)&d_csr.values,         mi.num_nonzeros * sizeof(double)));
-    HC(hipMalloc((void **)&d_x,                   mi.num_columns  * sizeof(double)));
-    HC(hipMalloc((void **)&d_y,                   mi.num_rows     * sizeof(double)));
+    HC(hipMalloc((void **)&d_x,                  mi.num_columns  * sizeof(double)));
+    HC(hipMalloc((void **)&d_y,                  mi.num_rows     * sizeof(double)));
 
     // Transfer data to device
     HC(hipMemcpy(d_csr.row_ptr,        csr.row_ptr,        (mi.num_rows+1) * sizeof(int),    hipMemcpyHostToDevice));
@@ -241,6 +241,9 @@ spmv_ellpack_kernel(const matrix_info_t mi,
                     const double *x,
                     double *y)
 {
+    // This kernel uses one block per row, one thread per element.
+    // If blockDim.x > mi.max_nonzeros_per_row, there number of blocks per row
+    // is scaled to fit the problem.
 
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -248,11 +251,40 @@ spmv_ellpack_kernel(const matrix_info_t mi,
     if (col >= mi.max_nonzeros_per_row) return;
     if (row >= mi.num_rows)             return;
 
-    size_t col_index = ellpack.indices[row][col];
+    size_t col_index = ellpack.indices[row*mi.max_nonzeros_per_row+col];
     if (col_index == ELLPACK_SENTINEL_INDEX)
         return;
 
-    atomicAdd(&y[row], ellpack.data[row][col] * x[col_index]);
+    atomicAdd(&y[row], ellpack.data[row*mi.max_nonzeros_per_row+col] * x[col_index]);
+}
+
+// `spmv_ellpack_kernel2()` computes the multiplication of a sparse vector in the ELLPACK format with
+// a dense vector, referred to as the source vector, to produce another dense vector, called the
+// destination vector.
+//
+// It is assumed that the sparse matrix has a maximum of `max_nonzeros_per_row` nonzeros per row
+__global__ void
+spmv_ellpack_kernel2(const matrix_info_t mi,
+                     const ellpack_matrix_t ellpack,
+                     const double *x,
+                     double *y)
+{
+    // This kernel uses one thread per row.
+
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= mi.num_rows) return;
+
+    double z = 0.;
+    for (int i = 0; i < mi.max_nonzeros_per_row; i++) {
+        size_t col_index = ellpack.indices[row*mi.max_nonzeros_per_row+i];
+        if (col_index == ELLPACK_SENTINEL_INDEX)
+            break;
+
+        z += ellpack.data[row*mi.max_nonzeros_per_row+i] * x[col_index];
+    }
+
+    y[row] = z;
 }
 
 // `spmv_ellpack_serial()` computes the multiplication of a sparse vector in the ELLPACK format with
@@ -261,21 +293,22 @@ spmv_ellpack_kernel(const matrix_info_t mi,
 //
 // It is assumed that the sparse matrix has a maximum of `max_nonzeros_per_row` nonzeros per row
 __host__ void
-spmv_ellpack_serial(matrix_info_t mi,
+spmv_ellpack_serial(const matrix_info_t mi,
                     const ellpack_matrix_t ellpack,
                     const double *x,
                     double *y)
 {
+#pragma omp parallel for
     for (int i = 0; i < mi.num_rows; i++) {
         double z = 0.0;
         for (int j = 0; j < mi.max_nonzeros_per_row; j++) {
 
-            size_t col_index = ellpack.indices[i][j];
+            size_t col_index = ellpack.indices[i*mi.max_nonzeros_per_row+j];
 
             if (col_index == ELLPACK_SENTINEL_INDEX)
                 break;
 
-            z += ellpack.data[i][j] * x[col_index];
+            z += ellpack.data[i*mi.max_nonzeros_per_row+j] * x[col_index];
         }
         y[i] += z;
     }
@@ -307,35 +340,27 @@ int benchmark_ellpack(const matrix_market_t *mm,
     err = ellpack_matrix_from_matrix_market(&ellpack, mm, mi);
     if (err) return err;
 
+    const size_t num_elems = mi.num_rows * mi.max_nonzeros_per_row;
+
     // Allocate device arrays
-    HC(hipMalloc((void **)&d_ellpack, sizeof(ellpack_matrix_t)));
-
-    HC(hipMalloc((void **)&d_ellpack.data, mi.num_rows * sizeof(double *)));
-    for (int i = 0; i < mi.num_rows; i++)
-        HC(hipMalloc((void **)&d_ellpack.data[i], mi.max_nonzeros_per_row * sizeof(double)));
-
-    HC(hipMalloc((void **)&d_ellpack.indices, mi.num_rows * sizeof(int *)));
-    for (int i = 0; i < mi.num_rows; i++)
-        HC(hipMalloc((void **)&d_ellpack.indices[i], mi.max_nonzeros_per_row * sizeof(int)));
+    HC(hipMalloc((void **)&d_ellpack.data,    num_elems * sizeof(double)));
+    HC(hipMalloc((void **)&d_ellpack.indices, num_elems * sizeof(int *)));
 
     // Allocate the device side in/out vectors
     HC(hipMalloc((void **)&d_x, mi.num_columns * sizeof(double)));
     HC(hipMalloc((void **)&d_y, mi.num_rows    * sizeof(double)));
 
     // Copy data over to device
-    for (int i = 0; i < mi.num_rows; i++)
-        HC(hipMemcpy(d_ellpack.data[i], ellpack.data[i], mi.max_nonzeros_per_row * sizeof(double), hipMemcpyHostToDevice));
-
-    for (int i = 0; i < mi.num_rows; i++)
-        HC(hipMemcpy(d_ellpack.indices[i], ellpack.indices[i], mi.max_nonzeros_per_row * sizeof(int), hipMemcpyHostToDevice));
+    HC(hipMemcpy(d_ellpack.data,    ellpack.data,    num_elems * sizeof(double), hipMemcpyHostToDevice));
+    HC(hipMemcpy(d_ellpack.indices, ellpack.indices, num_elems * sizeof(int),    hipMemcpyHostToDevice));
 
     HC(hipMemcpy(d_x, x, mi.num_columns * sizeof(double), hipMemcpyHostToDevice));
     HC(hipMemcpy(d_y, y, mi.num_rows    * sizeof(double), hipMemcpyHostToDevice));
 
-    // Setup work dimensions
-    // Each block (most likely) works on one whole row.
+#if 1 // One block per row
     dim3 block_size(64); // one warp per row
     dim3 grid_size((mi.max_nonzeros_per_row + block_size.x - 1)/block_size.x, mi.num_rows);
+
 
     clock_gettime(CLOCK_MONOTONIC, &start_time);
 
@@ -345,6 +370,20 @@ int benchmark_ellpack(const matrix_market_t *mm,
     hipDeviceSynchronize();
 
     clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+#else // One thread per row
+    dim3 block_size(64); // one warp per row
+    dim3 grid_size((mi.num_rows+block_size.x-1)/block_size.x);
+
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+    // Compute the sparse matrix-vector multiplication.
+    hipLaunchKernelGGL(spmv_ellpack_kernel2, grid_size, block_size, 0, 0,
+                       mi, d_ellpack, d_x, d_y);
+    hipDeviceSynchronize();
+
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+#endif
 
     log_execution("ELLPACK (GPU)", mi, time_spent(start_time, end_time));
 
@@ -371,10 +410,6 @@ int benchmark_ellpack(const matrix_market_t *mm,
             fprintf(stdout, "%12g\n", y[i]);
     }
 
-    for (int i = 0; i < mi.max_nonzeros_per_row; i++) {
-        HC(hipFree(d_ellpack.data[i]));
-        HC(hipFree(d_ellpack.indices[i]));
-    }
     HC(hipFree(d_ellpack.data));
     HC(hipFree(d_ellpack.indices));
     HC(hipFree(d_x));
