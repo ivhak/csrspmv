@@ -17,11 +17,12 @@ extern "C" {
 
 // Defualt settings
 args_t args = {
+    .iterations           = 1,
     .verbose              = 0,
     .format               = NO_FORMAT,
     .matrix_market_path   = NULL,
     .max_nonzeros_per_row = 4,
-    .benchmark_cpu        = 0
+    .benchmark_cpu        = 0,
 };
 
 #define HC(command) {     \
@@ -44,10 +45,11 @@ int benchmark_ellpack(const matrix_market_t *mm, const matrix_info_t mi, const d
 
 void usage(FILE *stream, char *filename) {
     fprintf(stream,
-        "Usage: %1$s [-f FORMAT] [-c] [-v] [-m NUM] [-h] INPUT_FILE\n"
+        "Usage: %1$s [-f FORMAT] [-c] [-v] [-i NUM] [-m NUM] [-h] INPUT_FILE\n"
         "Options:\n"
         "   -h         Show usage.\n\n"
         "   -c         Run the benchmarks on the CPU as well as the GPU.\n\n"
+        "   -i  NUM    Run the benchmarks for NUM iterations.\n\n"
         "   -v         Be verbose, show the output of the SpMV calculation(s).\n\n"
         "   -f  FORMAT Run the benchmarks using the format FORMAT, where FORMAT\n"
         "              is either CSR or ELLPACK. More than one format can be specified\n"
@@ -237,13 +239,15 @@ int benchmark_csr(const matrix_market_t *mm,
     clock_gettime(CLOCK_MONOTONIC, &start_time);
 
     // Compute the sparse matrix-vector multiplication.
-    hipLaunchKernelGGL(spmv_csr_kernel, grid_size, block_size, 0, 0,
-                       mi, d_csr, d_x, d_y);
+    for (int i = 0; i < args.iterations; i++) {
+        hipLaunchKernelGGL(spmv_csr_kernel, grid_size, block_size, 0, 0,
+                           mi, d_csr, d_x, d_y);
+    }
     hipDeviceSynchronize();
 
     clock_gettime(CLOCK_MONOTONIC, &end_time);
 
-    log_execution("CSR (GPU)", mi, time_spent(start_time, end_time));
+    log_execution("CSR (GPU)", mi, args.iterations, time_spent(start_time, end_time));
 
     // Copy back the resulting vector to host.
     HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
@@ -258,9 +262,10 @@ int benchmark_csr(const matrix_market_t *mm,
     if (args.benchmark_cpu) {
         set_vector_double(y, mi.num_rows, 0.);
         clock_gettime(CLOCK_MONOTONIC, &start_time);
-        spmv_csr_serial(mi, csr, x, y);
+        for (int i = 0; i < args.iterations; i++)
+            spmv_csr_serial(mi, csr, x, y);
         clock_gettime(CLOCK_MONOTONIC, &end_time);
-        log_execution("CSR (CPU)", mi, time_spent(start_time, end_time));
+        log_execution("CSR (CPU)", mi, args.iterations, time_spent(start_time, end_time));
 
         if (args.verbose) {
             // Write the results to standard output.
@@ -331,7 +336,7 @@ spmv_ellpack_kernel2(const matrix_info_t mi,
         z += ellpack.data[row*mi.max_nonzeros_per_row+i] * x[col_index];
     }
 
-    y[row] = z;
+    y[row] += z;
 }
 
 // `spmv_ellpack_serial()` computes the multiplication of a sparse vector in the ELLPACK format with
@@ -425,14 +430,16 @@ int benchmark_ellpack(const matrix_market_t *mm,
     clock_gettime(CLOCK_MONOTONIC, &start_time);
 
     // Compute the sparse matrix-vector multiplication.
-    hipLaunchKernelGGL(spmv_ellpack_kernel2, grid_size, block_size, 0, 0,
-                       mi, d_ellpack, d_x, d_y);
+    for (int i = 0; i < args.iterations; i++) {
+        hipLaunchKernelGGL(spmv_ellpack_kernel2, grid_size, block_size, 0, 0,
+                           mi, d_ellpack, d_x, d_y);
+    }
     hipDeviceSynchronize();
 
     clock_gettime(CLOCK_MONOTONIC, &end_time);
 #endif
 
-    log_execution("ELLPACK (GPU)", mi, time_spent(start_time, end_time));
+    log_execution("ELLPACK (GPU)", mi, args.iterations, time_spent(start_time, end_time));
 
     // Copy back the resulting vector to host.
     HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
@@ -448,9 +455,10 @@ int benchmark_ellpack(const matrix_market_t *mm,
         // Zero out the result vector and rerun the benchmark on the CPU
         set_vector_double(y, mi.num_rows, 0.);
         clock_gettime(CLOCK_MONOTONIC, &start_time);
-        spmv_ellpack_serial(mi, ellpack, x, y);
+        for (int i = 0; i < args.iterations; i++)
+            spmv_ellpack_serial(mi, ellpack, x, y);
         clock_gettime(CLOCK_MONOTONIC, &end_time);
-        log_execution("ELLPACK (CPU)", mi, time_spent(start_time, end_time));
+        log_execution("ELLPACK (CPU)", mi, args.iterations, time_spent(start_time, end_time));
 
         if (args.verbose) {
             // Write the results to standard output.

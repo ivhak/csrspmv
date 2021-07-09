@@ -9,9 +9,10 @@ inline void set_vector_double(double *v, int c, double val)
 }
 
 
-void log_execution(const char *matrix_format, matrix_info_t mi, float time)
+void log_execution(const char *matrix_format, matrix_info_t mi, int iterations, float time)
 {
-    printf("%-14s  %d rows %d columns %d non-zero elements: %.6f seconds\n", matrix_format, mi.num_rows, mi.num_columns, mi.num_nonzeros, time);
+    printf("%-14s  %d rows %d columns %d non-zero elements, %d iterations: %.6f seconds, %.6f seconds per iteration\n",
+            matrix_format, mi.num_rows, mi.num_columns, mi.num_nonzeros, iterations, time, time / (float)iterations);
 }
 
 float time_spent(struct timespec t0, struct timespec t1)

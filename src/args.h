@@ -10,6 +10,7 @@ typedef enum {
 } matrix_format;
 
 typedef struct {
+    int iterations;
     int verbose;
     matrix_format format;
     char *matrix_market_path;
