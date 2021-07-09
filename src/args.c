@@ -10,11 +10,11 @@ void parse_args(int argc, char *argv[], args_t *args, int *help)
     extern char *optarg;
     while ((opt=getopt(argc, argv, "vm:f:chi:")) != -1) {
         switch (opt) {
-        case 'h': *help = 1; return;
+        case 'h': *help = true; return;
         case 'm': args->max_nonzeros_per_row = atoi(optarg); break;
         case 'i': args->iterations = atoi(optarg);           break;
-        case 'v': args->verbose = 1;                         break;
-        case 'c': args->benchmark_cpu = 1;                   break;
+        case 'v': args->verbose = true;                      break;
+        case 'c': args->benchmark_cpu = true;                break;
         case 'f':
             if      (strncmp("ELLPACK", optarg, sizeof("ELLPACK")) == 0) args->format |= ELLPACK;
             else if (strncmp("CSR",     optarg, sizeof("CSR")) == 0)     args->format |= CSR;

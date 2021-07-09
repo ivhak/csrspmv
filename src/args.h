@@ -1,5 +1,6 @@
 #ifndef ARGS_H
 #define ARGS_H
+#include <stdbool.h>
 
 #define STR(a) #a
 
@@ -11,11 +12,11 @@ typedef enum {
 
 typedef struct {
     int iterations;
-    int verbose;
+    bool verbose;
     matrix_format format;
     char *matrix_market_path;
     int max_nonzeros_per_row;
-    int benchmark_cpu;
+    bool benchmark_cpu;
 } args_t;
 
 void parse_args(int argc, char *argv[], args_t *args, int *help);

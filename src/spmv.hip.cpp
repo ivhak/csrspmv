@@ -17,13 +17,16 @@ extern "C" {
 
 // Defualt settings
 args_t args = {
-    .iterations           = 1,
-    .verbose              = 0,
-    .format               = NO_FORMAT,
-    .matrix_market_path   = NULL,
-    .max_nonzeros_per_row = 4,
-    .benchmark_cpu        = 0,
+    .iterations           = 1,         // Number of iterations to run each benchmark
+    .verbose              = false,     // If true, print up to PRINT_MAX_ROWS rows of output
+    .format               = NO_FORMAT, // Which formats to benchmark
+    .matrix_market_path   = NULL,      // Filename of the input file
+    .max_nonzeros_per_row = 4,         // Max number of nonzeros per row in the matrix
+    .benchmark_cpu        = false      // If true, run benchmarks on CPU as well
 };
+
+#define PRINT_MAX_ROWS 10
+#define MIN(a,b) (a < b ? a : b)
 
 #define HC(command) {     \
     hipError_t status = command; \
@@ -43,7 +46,8 @@ __host__   void spmv_ellpack_serial(const matrix_info_t mi, const ellpack_matrix
 int benchmark_csr    (const matrix_market_t *mm, const matrix_info_t mi, const double *x, double *y);
 int benchmark_ellpack(const matrix_market_t *mm, const matrix_info_t mi, const double *x, double *y);
 
-void usage(FILE *stream, char *filename) {
+void
+usage(FILE *stream, char *filename) {
     fprintf(stream,
         "Usage: %1$s [-f FORMAT] [-c] [-v] [-i NUM] [-m NUM] [-h] INPUT_FILE\n"
         "Options:\n"
@@ -64,7 +68,8 @@ void usage(FILE *stream, char *filename) {
         filename);
 }
 
-int main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     int err;
 
@@ -76,7 +81,7 @@ int main(int argc, char *argv[])
         .max_nonzeros_per_row = 4
     };
 
-    int help = 0;
+    bool help = false;
     parse_args(argc, argv, &args, &help);
 
     if (help) {
@@ -195,10 +200,11 @@ spmv_csr_serial(const matrix_info_t mi,
 // `benchmark_csr()` converts the matrix in COO form to CSR, and the performs SpMV on the resulting
 // CSR matrix with the dense vector `x`. This is done on both the GPU (with `spmv_ellpack_kernel`)
 // and on the CPU (with `spmv_ellpack_serial`)
-int benchmark_csr(const matrix_market_t *mm,
-                  const matrix_info_t mi,
-                  const double *x,
-                  double *y)
+int
+benchmark_csr(const matrix_market_t *mm,
+              const matrix_info_t mi,
+              const double *x,
+              double *y)
 {
     int err;
     struct timespec start_time, end_time;
@@ -240,8 +246,7 @@ int benchmark_csr(const matrix_market_t *mm,
 
     // Compute the sparse matrix-vector multiplication.
     for (int i = 0; i < args.iterations; i++) {
-        hipLaunchKernelGGL(spmv_csr_kernel, grid_size, block_size, 0, 0,
-                           mi, d_csr, d_x, d_y);
+        hipLaunchKernelGGL(spmv_csr_kernel, grid_size, block_size, 0, 0, mi, d_csr, d_x, d_y);
     }
     hipDeviceSynchronize();
 
@@ -254,8 +259,9 @@ int benchmark_csr(const matrix_market_t *mm,
 
     if (args.verbose) {
         // Write the results to standard output.
-        for (int i = 0; i < mi.num_rows; i++)
-            fprintf(stdout, "%12g\n", y[i]);
+        for (int i = 0; i < MIN(PRINT_MAX_ROWS,mi.num_rows); i++)
+            fprintf(stdout, "%6g ", y[i]);
+        fprintf(stdout, "\n");
     }
 
     // CPU
@@ -269,8 +275,9 @@ int benchmark_csr(const matrix_market_t *mm,
 
         if (args.verbose) {
             // Write the results to standard output.
-            for (int i = 0; i < mi.num_rows; i++)
-                fprintf(stdout, "%12g\n", y[i]);
+            for (int i = 0; i < MIN(PRINT_MAX_ROWS,mi.num_rows); i++)
+                fprintf(stdout, "%6g ", y[i]);
+            fprintf(stdout, "\n");
         }
     }
 
@@ -369,10 +376,11 @@ spmv_ellpack_serial(const matrix_info_t mi,
 // `benchmark_ellpack()` converts the matrix in COO form to ELLPACK, and the performs SpMV on the
 // resulting ELL matrix with the dense vector `x`. This is done on both the GPU (with
 // `spmv_ellpack_kernel`) and on the CPU (with `spmv_ellpack_serial`)
-int benchmark_ellpack(const matrix_market_t *mm,
-                      const matrix_info_t mi,
-                      const double *x,
-                      double *y)
+int
+benchmark_ellpack(const matrix_market_t *mm,
+                  const matrix_info_t mi,
+                  const double *x,
+                  double *y)
 {
     int err;
     struct timespec start_time, end_time;
@@ -431,8 +439,7 @@ int benchmark_ellpack(const matrix_market_t *mm,
 
     // Compute the sparse matrix-vector multiplication.
     for (int i = 0; i < args.iterations; i++) {
-        hipLaunchKernelGGL(spmv_ellpack_kernel2, grid_size, block_size, 0, 0,
-                           mi, d_ellpack, d_x, d_y);
+        hipLaunchKernelGGL(spmv_ellpack_kernel2, grid_size, block_size, 0, 0, mi, d_ellpack, d_x, d_y);
     }
     hipDeviceSynchronize();
 
@@ -446,8 +453,9 @@ int benchmark_ellpack(const matrix_market_t *mm,
 
     if (args.verbose) {
         // Write the results to standard output.
-        for (int i = 0; i < mi.num_rows; i++)
-            fprintf(stdout, "%12g\n", y[i]);
+        for (int i = 0; i < MIN(PRINT_MAX_ROWS,mi.num_rows); i++)
+            fprintf(stdout, "%6g ", y[i]);
+        fprintf(stdout, "\n");
     }
 
     // CPU
@@ -462,8 +470,9 @@ int benchmark_ellpack(const matrix_market_t *mm,
 
         if (args.verbose) {
             // Write the results to standard output.
-            for (int i = 0; i < mi.num_rows; i++)
-                fprintf(stdout, "%12g\n", y[i]);
+            for (int i = 0; i < MIN(PRINT_MAX_ROWS,mi.num_rows); i++)
+                fprintf(stdout, "%6g ", y[i]);
+            fprintf(stdout, "\n");
         }
     }
 
