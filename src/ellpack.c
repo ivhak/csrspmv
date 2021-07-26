@@ -72,3 +72,14 @@ int ellpack_matrix_from_matrix_market(ellpack_matrix_t *ellpack,
     ellpack->indices = indices;
     return 0;
 }
+
+int tranpose_ellpack(ellpack_matrix_t *in, ellpack_matrix_t *out, const matrix_info_t mi)
+{
+    for (int i = 0; i < mi.num_rows; i++) {
+        for (int j = 0; j < mi.max_nonzeros_per_row; j++) {
+            out->data[j*mi.num_rows + i] = in->data[i*mi.max_nonzeros_per_row + j];
+            out->indices[j*mi.num_rows + i] = in->indices[i*mi.max_nonzeros_per_row + j];
+        }
+    }
+    return 0;
+}

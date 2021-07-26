@@ -346,6 +346,32 @@ spmv_ellpack_kernel2(const matrix_info_t mi,
     y[row] += z;
 }
 
+__global__ void
+spmv_ellpack_transposed_kernel(const matrix_info_t mi,
+                               const ellpack_matrix_t ellpack,
+                               const double *x,
+                               double *y)
+{
+    // This kernel uses one thread per row.
+
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= mi.num_rows) return;
+
+#if 1
+    double z = 0.;
+    for (int i = 0; i < mi.max_nonzeros_per_row; i++) {
+        size_t col_index = ellpack.indices[i*mi.num_rows+row];
+        if (col_index == ELLPACK_SENTINEL_INDEX)
+            break;
+
+        z += ellpack.data[i*mi.num_rows+row] * x[col_index];
+    }
+
+    y[row] += z;
+#endif
+}
+
 // `spmv_ellpack_serial()` computes the multiplication of a sparse vector in the ELLPACK format with
 // a dense vector, referred to as the source vector, to produce another dense vector, called the
 // destination vector.
@@ -385,11 +411,18 @@ benchmark_ellpack(const matrix_market_t *mm,
     int err;
     struct timespec start_time, end_time;
 
-    // Host side ELLPACK
+    // host side ellpack
     ellpack_matrix_t ellpack;
+
+    // host side ellpack transposed
+    ellpack_matrix_t ellpack_trans;
 
     // Device side ELLPACK
     ellpack_matrix_t d_ellpack;
+
+    // Device side ELLPACK transposed
+    ellpack_matrix_t d_ellpack_trans;
+
 
     // Device side in and out vectors
     // `x` is the dense vector multiplied with the sparse matrix
@@ -400,11 +433,19 @@ benchmark_ellpack(const matrix_market_t *mm,
     err = ellpack_matrix_from_matrix_market(&ellpack, mm, mi);
     if (err) return err;
 
+
     const size_t num_elems = mi.num_rows * mi.max_nonzeros_per_row;
+
+    ellpack_trans.data    = (double *)malloc(num_elems*sizeof(double));
+    ellpack_trans.indices = (int *)   malloc(num_elems*sizeof(int));
+    tranpose_ellpack(&ellpack, &ellpack_trans, mi);
 
     // Allocate device arrays
     HC(hipMalloc((void **)&d_ellpack.data,    num_elems * sizeof(double)));
-    HC(hipMalloc((void **)&d_ellpack.indices, num_elems * sizeof(int *)));
+    HC(hipMalloc((void **)&d_ellpack.indices, num_elems * sizeof(int)));
+
+    HC(hipMalloc((void **)&d_ellpack_trans.data,    num_elems * sizeof(double)));
+    HC(hipMalloc((void **)&d_ellpack_trans.indices, num_elems * sizeof(int)));
 
     // Allocate the device side in/out vectors
     HC(hipMalloc((void **)&d_x, mi.num_columns * sizeof(double)));
@@ -414,49 +455,100 @@ benchmark_ellpack(const matrix_market_t *mm,
     HC(hipMemcpy(d_ellpack.data,    ellpack.data,    num_elems * sizeof(double), hipMemcpyHostToDevice));
     HC(hipMemcpy(d_ellpack.indices, ellpack.indices, num_elems * sizeof(int),    hipMemcpyHostToDevice));
 
+    HC(hipMemcpy(d_ellpack_trans.data,    ellpack_trans.data,    num_elems * sizeof(double), hipMemcpyHostToDevice));
+    HC(hipMemcpy(d_ellpack_trans.indices, ellpack_trans.indices, num_elems * sizeof(int),    hipMemcpyHostToDevice));
+
     HC(hipMemcpy(d_x, x, mi.num_columns * sizeof(double), hipMemcpyHostToDevice));
     HC(hipMemcpy(d_y, y, mi.num_rows    * sizeof(double), hipMemcpyHostToDevice));
 
-#if 0 // One block per row
-    dim3 block_size(64); // one warp per row
-    dim3 grid_size((mi.max_nonzeros_per_row + block_size.x - 1)/block_size.x, mi.num_rows);
+    { // ELLPACK: One block per row
+        dim3 block_size(64); // one warp per row
+        dim3 grid_size((mi.max_nonzeros_per_row + block_size.x - 1)/block_size.x, mi.num_rows);
+
+        HC(hipMemset(d_y, 0, mi.num_rows*sizeof(double)));
+
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
 
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+        // Compute the sparse matrix-vector multiplication.
+        for (int i = 0; i < args.iterations; i++) {
+            hipLaunchKernelGGL(spmv_ellpack_kernel, grid_size, block_size, 0, 0, mi, d_ellpack, d_x, d_y);
+        }
+        hipDeviceSynchronize();
 
-    // Compute the sparse matrix-vector multiplication.
-    hipLaunchKernelGGL(spmv_ellpack_kernel, grid_size, block_size, 0, 0,
-                       mi, d_ellpack, d_x, d_y);
-    hipDeviceSynchronize();
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
 
-    clock_gettime(CLOCK_MONOTONIC, &end_time);
+        log_execution("ELLPACK (ONE BLOCK PER ROW)  (GPU)", mi, args.iterations, time_spent(start_time, end_time));
 
-#else // One thread per row
-    dim3 block_size(64); // one warp per row
-    dim3 grid_size((mi.num_rows+block_size.x-1)/block_size.x);
+        // Copy back the resulting vector to host.
+        HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-
-    // Compute the sparse matrix-vector multiplication.
-    for (int i = 0; i < args.iterations; i++) {
-        hipLaunchKernelGGL(spmv_ellpack_kernel2, grid_size, block_size, 0, 0, mi, d_ellpack, d_x, d_y);
+        if (args.verbose) {
+            // Write the results to standard output.
+            for (int i = 0; i < MIN(PRINT_MAX_ROWS,mi.num_rows); i++)
+                fprintf(stdout, "%6g ", y[i]);
+            fprintf(stdout, "\n");
+        }
     }
-    hipDeviceSynchronize();
 
-    clock_gettime(CLOCK_MONOTONIC, &end_time);
-#endif
 
-    log_execution("ELLPACK (GPU)", mi, args.iterations, time_spent(start_time, end_time));
+    { // ELLPACK: One thread per row
+        dim3 block_size(64); // One warp per block
+        dim3 grid_size((mi.num_rows+block_size.x-1)/block_size.x);
 
-    // Copy back the resulting vector to host.
-    HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
 
-    if (args.verbose) {
-        // Write the results to standard output.
-        for (int i = 0; i < MIN(PRINT_MAX_ROWS,mi.num_rows); i++)
-            fprintf(stdout, "%6g ", y[i]);
-        fprintf(stdout, "\n");
+        // Compute the sparse matrix-vector multiplication.
+        for (int i = 0; i < args.iterations; i++) {
+            hipLaunchKernelGGL(spmv_ellpack_kernel2, grid_size, block_size, 0, 0, mi, d_ellpack, d_x, d_y);
+        }
+        hipDeviceSynchronize();
+
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+        log_execution("ELLPACK (ONE THREAD PER ROW) (GPU)", mi, args.iterations, time_spent(start_time, end_time));
+
+        // Copy back the resulting vector to host.
+        HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
+
+        if (args.verbose) {
+            // Write the results to standard output.
+            for (int i = 0; i < MIN(PRINT_MAX_ROWS,mi.num_rows); i++)
+                fprintf(stdout, "%6g ", y[i]);
+            fprintf(stdout, "\n");
+        }
     }
+
+
+    { // ELLPACK: Transposed
+        dim3 block_size(64); // one warp per block
+        dim3 grid_size((mi.num_rows+block_size.x-1)/block_size.x);
+
+        HC(hipMemset(d_y, 0, mi.num_rows*sizeof(double)));
+
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+        // Compute the sparse matrix-vector multiplication.
+        for (int i = 0; i < args.iterations; i++) {
+            hipLaunchKernelGGL(spmv_ellpack_transposed_kernel, grid_size, block_size, 0, 0, mi, d_ellpack_trans, d_x, d_y);
+        }
+        hipDeviceSynchronize();
+
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+        log_execution("ELLPACK (TRANSPOSED)         (GPU)", mi, args.iterations, time_spent(start_time, end_time));
+
+        // Copy back the resulting vector to host.
+        HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
+
+        if (args.verbose) {
+            // Write the results to standard output.
+            for (int i = 0; i < MIN(PRINT_MAX_ROWS,mi.num_rows); i++)
+                fprintf(stdout, "%6g ", y[i]);
+            fprintf(stdout, "\n");
+        }
+    }
+
 
     // CPU
     if (args.benchmark_cpu) {
@@ -478,6 +570,8 @@ benchmark_ellpack(const matrix_market_t *mm,
 
     HC(hipFree(d_ellpack.data));
     HC(hipFree(d_ellpack.indices));
+    HC(hipFree(d_ellpack_trans.data));
+    HC(hipFree(d_ellpack_trans.indices));
     HC(hipFree(d_x));
     HC(hipFree(d_y));
     return 1;

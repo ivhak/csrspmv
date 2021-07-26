@@ -19,7 +19,7 @@ typedef struct {
     bool benchmark_cpu;
 } args_t;
 
-void parse_args(int argc, char *argv[], args_t *args, int *help);
+void parse_args(int argc, char *argv[], args_t *args, bool *help);
 
 #endif
 

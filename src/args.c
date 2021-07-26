@@ -3,7 +3,7 @@
 #include <string.h>
 #include <getopt.h>
 
-void parse_args(int argc, char *argv[], args_t *args, int *help)
+void parse_args(int argc, char *argv[], args_t *args, bool *help)
 {
     int opt;
     extern int optind;
