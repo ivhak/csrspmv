@@ -6,8 +6,9 @@
 
 typedef enum {
     NO_FORMAT = 0,
-    CSR       = 1,
-    ELLPACK   = 2,
+    ALL       = 1,
+    CSR       = 2,
+    ELLPACK   = 4,
 } matrix_format;
 
 typedef struct {
