@@ -369,19 +369,18 @@ spmv_ellpack_column_major_tiled_kernel(const matrix_info_t mi,
                                        int tile_size)
 {
     // This kernel uses one thread per row.
-    const int M = mi.num_rows;
     const int N = mi.max_nonzeros_per_row;
     const int T = tile_size;
 
     int col     = threadIdx.x;
-    int row_off = blockId.x*N*T;
+    int row_off = blockIdx.x*N*T;
 
     int row = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (row >= mi.num_rows) return;
 
     double z = 0.;
-    for (int i = 0; i < mi.max_nonzeros_per_row; i++) {
+    for (int i = 0; i < N; i++) {
         size_t col_index = ellpack.indices[row_off + i*T + col];
         if (col_index == ELLPACK_SENTINEL_INDEX)
             break;
@@ -431,11 +430,9 @@ benchmark_ellpack(const matrix_market_t *mm,
     int err;
     struct timespec start_time, end_time;
 
-    // Host and device side ELLPACK matrices; regular and column major.
-    ellpack_matrix_t   ellpack,   ellpack_col_major,
-                     d_ellpack, d_ellpack_col_major;
-
-
+    // Host and device side ELLPACK matrices
+    ellpack_matrix_t ellpack, ellpack_col_major, ellpack_col_major_tiled;
+    ellpack_matrix_t d_ellpack;
 
     // Device side in and out vectors
     // `x` is the dense vector multiplied with the sparse matrix
@@ -446,30 +443,38 @@ benchmark_ellpack(const matrix_market_t *mm,
     err = ellpack_matrix_from_matrix_market(&ellpack, mm, mi);
     if (err) return err;
 
-    const size_t num_elems = mi.num_rows * mi.max_nonzeros_per_row;
+    const int num_elems = mi.num_rows * mi.max_nonzeros_per_row;
+
+    const int tile_size = 256;
 
     // Setup the column major ellpack, and transpose the regular ELLPACK matrix into it.
     init_ellpack(&ellpack_col_major, num_elems);
     transpose_ellpack(&ellpack, &ellpack_col_major, mi);
 
-    // Allocate device arrays
-    HC(hipMalloc((void **)&d_ellpack.data,    num_elems * sizeof(double)));
-    HC(hipMalloc((void **)&d_ellpack.indices, num_elems * sizeof(int)));
+    // Setup the column major, tiled ellpack.
+    //
+    // For the tiled version of the column major ELLPACK to work, the tile size
+    // has to divide the number of rows evenly. Since we choose the tile size
+    // to be a number that makes the data coalesce well, we align the data to
+    // fit the tile size rather than choosing a tile size that fits the data.
+    const int aligned_num_rows = tile_size*((mi.num_rows + tile_size - 1)/tile_size);
+    const int tiled_num_elems = aligned_num_rows *  mi.max_nonzeros_per_row;
+    init_ellpack(&ellpack_col_major_tiled, tiled_num_elems);
+    tiled_transpose_ellpack(&ellpack, &ellpack_col_major_tiled, mi, tile_size);
 
-    HC(hipMalloc((void **)&d_ellpack_col_major.data,    num_elems * sizeof(double)));
-    HC(hipMalloc((void **)&d_ellpack_col_major.indices, num_elems * sizeof(int)));
+    // Allocate device arrays. The same device side ellpack_matrixt_t is used
+    // for all the different benchmarks, so it has to fit the largest of the
+    // setups, i.e., `tiled_num_elems`. `tiled_num_elems` will be in the range
+    // [`num_elems`, `num_elems`+`tile_size`-1], so it is not like we are
+    // allocating a lot more than we need for the other ones.
+    HC(hipMalloc((void **)&d_ellpack.data,    tiled_num_elems * sizeof(double)));
+    HC(hipMalloc((void **)&d_ellpack.indices, tiled_num_elems * sizeof(int)));
 
     // Allocate the device side in/out vectors
     HC(hipMalloc((void **)&d_x, mi.num_columns * sizeof(double)));
     HC(hipMalloc((void **)&d_y, mi.num_rows    * sizeof(double)));
 
-    // Copy data over to device
-    HC(hipMemcpy(d_ellpack.data,    ellpack.data,    num_elems * sizeof(double), hipMemcpyHostToDevice));
-    HC(hipMemcpy(d_ellpack.indices, ellpack.indices, num_elems * sizeof(int),    hipMemcpyHostToDevice));
-
-    HC(hipMemcpy(d_ellpack_col_major.data,    ellpack_col_major.data,    num_elems * sizeof(double), hipMemcpyHostToDevice));
-    HC(hipMemcpy(d_ellpack_col_major.indices, ellpack_col_major.indices, num_elems * sizeof(int),    hipMemcpyHostToDevice));
-
+    // Copy over the input/output vectors
     HC(hipMemcpy(d_x, x, mi.num_columns * sizeof(double), hipMemcpyHostToDevice));
     HC(hipMemcpy(d_y, y, mi.num_rows    * sizeof(double), hipMemcpyHostToDevice));
 
@@ -483,10 +488,14 @@ benchmark_ellpack(const matrix_market_t *mm,
         dim3 block_size(64); // one warp per row
         dim3 grid_size((mi.max_nonzeros_per_row + block_size.x - 1)/block_size.x, mi.num_rows);
 
+        // Copy the ELLPACK for the first two benchmarks; normal row major
+        HC(hipMemcpy(d_ellpack.data,    ellpack.data,    num_elems * sizeof(double), hipMemcpyHostToDevice));
+        HC(hipMemcpy(d_ellpack.indices, ellpack.indices, num_elems * sizeof(int),    hipMemcpyHostToDevice));
+
+        // Zero out the result vector
         HC(hipMemset(d_y, 0, mi.num_rows*sizeof(double)));
 
         clock_gettime(CLOCK_MONOTONIC, &start_time);
-
 
         // Compute the sparse matrix-vector multiplication.
         for (int i = 0; i < args.iterations; i++)
@@ -507,6 +516,9 @@ benchmark_ellpack(const matrix_market_t *mm,
         dim3 block_size(64);
         dim3 grid_size((mi.num_rows+block_size.x-1)/block_size.x);
 
+        // No copying from host to device is needed; this version uses the same data as the last one.
+
+        // Zero out the result vector
         HC(hipMemset(d_y, 0, mi.num_rows*sizeof(double)));
 
         clock_gettime(CLOCK_MONOTONIC, &start_time);
@@ -527,16 +539,22 @@ benchmark_ellpack(const matrix_market_t *mm,
     }
 
     {   // ELLPACK: One thread per row, column major
+
+        // Copy over the column major host side ELLPACK
+        HC(hipMemcpy(d_ellpack.data,    ellpack_col_major.data,    num_elems * sizeof(double), hipMemcpyHostToDevice));
+        HC(hipMemcpy(d_ellpack.indices, ellpack_col_major.indices, num_elems * sizeof(int),    hipMemcpyHostToDevice));
+
         dim3 block_size(256);
         dim3 grid_size((mi.num_rows+block_size.x-1)/block_size.x);
 
+        // Zero out the result vector
         HC(hipMemset(d_y, 0, mi.num_rows*sizeof(double)));
 
         clock_gettime(CLOCK_MONOTONIC, &start_time);
 
         // Compute the sparse matrix-vector multiplication.
         for (int i = 0; i < args.iterations; i++)
-            hipLaunchKernelGGL(spmv_ellpack_column_major_kernel, grid_size, block_size, 0, 0, mi, d_ellpack_col_major, d_x, d_y);
+            hipLaunchKernelGGL(spmv_ellpack_column_major_kernel, grid_size, block_size, 0, 0, mi, d_ellpack, d_x, d_y);
         hipDeviceSynchronize();
 
         clock_gettime(CLOCK_MONOTONIC, &end_time);
@@ -549,30 +567,34 @@ benchmark_ellpack(const matrix_market_t *mm,
         if (args.verbose) print_vector(y, mi);
     }
 
-#if 0
     {   // ELLPACK: One thread per row, column major, tiled
-        dim3 block_size(256);
+
+        // Copy over the column major, tiled host side ELLPACK
+        HC(hipMemcpy(d_ellpack.data,    ellpack_col_major_tiled.data,    tiled_num_elems * sizeof(double), hipMemcpyHostToDevice));
+        HC(hipMemcpy(d_ellpack.indices, ellpack_col_major_tiled.indices, tiled_num_elems * sizeof(int),    hipMemcpyHostToDevice));
+
+        dim3 block_size(tile_size);
         dim3 grid_size((mi.num_rows+block_size.x-1)/block_size.x);
 
+        // Zero out the result vector
         HC(hipMemset(d_y, 0, mi.num_rows*sizeof(double)));
 
         clock_gettime(CLOCK_MONOTONIC, &start_time);
 
         // Compute the sparse matrix-vector multiplication.
         for (int i = 0; i < args.iterations; i++)
-            hipLaunchKernelGGL(spmv_ellpack_column_major_tiled_kernel, grid_size, block_size, 0, 0, mi, d_ellpack_col_major, d_x, d_y);
+            hipLaunchKernelGGL(spmv_ellpack_column_major_tiled_kernel, grid_size, block_size, 0, 0, mi, d_ellpack, d_x, d_y, tile_size);
         hipDeviceSynchronize();
 
         clock_gettime(CLOCK_MONOTONIC, &end_time);
 
-        log_execution("ELLPACK (GPU) (Column major)", args.iterations, time_spent(start_time, end_time));
+        log_execution("ELLPACK (GPU) (Column major,tiled)", args.iterations, time_spent(start_time, end_time));
 
         // Copy back the resulting vector to host.
         HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
 
         if (args.verbose) print_vector(y, mi);
     }
-#endif
 
     // CPU
     if (args.benchmark_cpu) {
@@ -589,8 +611,6 @@ benchmark_ellpack(const matrix_market_t *mm,
 
     HC(hipFree(d_ellpack.data));
     HC(hipFree(d_ellpack.indices));
-    HC(hipFree(d_ellpack_col_major.data));
-    HC(hipFree(d_ellpack_col_major.indices));
     HC(hipFree(d_x));
     HC(hipFree(d_y));
     return 1;
