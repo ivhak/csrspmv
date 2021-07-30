@@ -138,6 +138,9 @@ main(int argc, char *argv[])
         return errno;
     }
 
+    hipDeviceProp_t prop;
+    hipGetDeviceProperties(&prop, 0);
+    printf("GPU: %s\n", prop.name);
     print_header(mi, args.iterations);
 
     if (args.format & (CSR | ALL)) {
