@@ -1,11 +1,11 @@
 spmv-hip
-----------
+--------
 
 Example program for computing a sparse matrix-vector multiplication with a
 matrix in the compressed sparse row (CSR) and ELLPACK formats.
 
 Compiling on eX³
---------------
+----------------
 
 AMD
 
