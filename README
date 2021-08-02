@@ -23,6 +23,37 @@ NVIDIA
         $ module load cuda11.0/toolkit/11.0.3
         $ make clean nvidia
 
+Usage
+-----
+
+    ./spmv-hip-[amd|nvidia] [-f FORMAT] [-c] [-v] [-i NUM] [-m NUM] [-h] INPUT_FILE
+
+    Options:
+       -h         Show usage.
+
+       -c         Run the benchmarks on the CPU as well as the GPU.
+
+       -i  NUM    Run the benchmarks for NUM iterations.
+
+       -v         Be verbose, show the output of the SpMV calculation(s).
+
+       -f  FORMAT Run the benchmarks using the format FORMAT, where FORMAT
+                  is either CSR or ELLPACK. More than one format can be specified
+                  by repeating the option. Defaults to running all formats if no
+                  format is specified.
+
+       -m  NUM    Sets the maximum number of nonzero values per row for the
+                  matrix in INPUT_FILE. Must be less than or equal to the
+                  number of columns in the matrix. Required when using the
+                  ELLPACK format.
+
+    Example:
+
+       Run ELLPACK on both the GPU and CPU, on the matrix in mat.mtx,
+       which has 16 nonzeros per row:
+
+           ./spmv-hip-[amd|nvidia] -f ELLPACK -m 16 -c mat.mtx
+
 ANSI C library for Matrix Market I/O
 ------------------------------------
 
