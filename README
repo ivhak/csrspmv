@@ -1,0 +1,30 @@
+spmv-hip
+----------
+
+Example program for computing a sparse matrix-vector multiplication with a
+matrix in the compressed sparse row (CSR) and ELLPACK formats.
+
+Compiling on eX³
+--------------
+
+AMD
+
+    The ROCm toolchain is installed on n004 (mi100q). Run the following command
+    to compile for AMD and produce the binary `spmv-hip-amd`:
+
+        $ make clean amd
+
+NVIDIA
+
+    To compile for NVIDIA, the ROCm toolchain is still required, i.e., it is
+    still required to be on n004. To produce the binary `spmv-hip-nvidia`, run
+    the following commands:
+
+        $ module load cuda11.0/toolkit/11.0.3
+        $ make clean nvidia
+
+ANSI C library for Matrix Market I/O
+------------------------------------
+
+The files `src/mmio.h` and `src/mmio.c` are from the "NIST ANSI C library for Matrix Market I/O"
+(https://math.nist.gov/MatrixMarket/mmio-c.html).
