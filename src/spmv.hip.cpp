@@ -37,7 +37,6 @@ __global__ void spmv_csr_kernel (const matrix_info_t mi, const csr_matrix_t csr,
 __host__   void spmv_csr_serial (const matrix_info_t mi, const csr_matrix_t csr,         const double *x, double *y);
 
 __global__ void spmv_ellpack_kernel                   (const matrix_info_t mi, const ellpack_matrix_t ellpack, const double *x, double *y);
-__global__ void spmv_ellpack_kernel2                  (const matrix_info_t mi, const ellpack_matrix_t ellpack, const double *x, double *y);
 __global__ void spmv_ellpack_column_major_kernel      (const matrix_info_t mi, const ellpack_matrix_t ellpack, const double *x, double *y);
 __global__ void spmv_ellpack_column_major_tiled_kernel(const matrix_info_t mi, const ellpack_matrix_t ellpack, const double *x, double *y);
 __host__   void spmv_ellpack_serial                   (const matrix_info_t mi, const ellpack_matrix_t ellpack, const double *x, double *y);
@@ -283,34 +282,6 @@ benchmark_csr(const matrix_market_t *mm,
 // It is assumed that the sparse matrix has a maximum of `max_nonzeros_per_row` nonzeros per row
 __global__ void
 spmv_ellpack_kernel(const matrix_info_t mi,
-                    const ellpack_matrix_t ellpack,
-                    const double *x,
-                    double *y)
-{
-    // This kernel uses one block per row, one thread per element.
-    // If blockDim.x > mi.max_nonzeros_per_row, there number of blocks per row
-    // is scaled to fit the problem.
-
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (col >= mi.max_nonzeros_per_row) return;
-    if (row >= mi.num_rows)             return;
-
-    size_t col_index = ellpack.indices[row*mi.max_nonzeros_per_row+col];
-    if (col_index == ELLPACK_SENTINEL_INDEX)
-        return;
-
-    atomicAdd(&y[row], ellpack.data[row*mi.max_nonzeros_per_row+col] * x[col_index]);
-}
-
-// `spmv_ellpack_kernel2()` computes the multiplication of a sparse vector in the ELLPACK format with
-// a dense vector, referred to as the source vector, to produce another dense vector, called the
-// destination vector.
-//
-// It is assumed that the sparse matrix has a maximum of `max_nonzeros_per_row` nonzeros per row
-__global__ void
-spmv_ellpack_kernel2(const matrix_info_t mi,
                      const ellpack_matrix_t ellpack,
                      const double *x,
                      double *y)
@@ -355,7 +326,7 @@ spmv_ellpack_column_major_kernel(const matrix_info_t mi,
     for (int i = 0; i < mi.max_nonzeros_per_row; i++) {
         size_t col_index = ellpack.indices[i*mi.num_rows+row];
         if (col_index == ELLPACK_SENTINEL_INDEX)
-            break;
+            continue;
 
         z += ellpack.data[i*mi.num_rows+row] * x[col_index];
     }
@@ -363,7 +334,6 @@ spmv_ellpack_column_major_kernel(const matrix_info_t mi,
     y[row] += z;
 }
 
-// TODO: Figure this out @UNFINISHED
 __global__ void
 spmv_ellpack_column_major_tiled_kernel(const matrix_info_t mi,
                                        const ellpack_matrix_t ellpack,
@@ -482,14 +452,13 @@ benchmark_ellpack(const matrix_market_t *mm,
     HC(hipMemcpy(d_y, y, mi.num_rows    * sizeof(double), hipMemcpyHostToDevice));
 
     // Run the ELLPACK benchmarks:
-    //  * The first version runs with one block per row.
-    //  * The second version runs with one thread per row.
-    //  * The third version runs with one thread per row, with the matrix stored column major.
-    //  * The fourth and lastversion runs one the CPU.
+    //  * The first version runs with one thread per row, row major
+    //  * The second version runs with one thread per row, with the matrix stored column major.
+    //  * The third and last version runs on the CPU.
 
-    {   // ELLPACK: One block per row
-        dim3 block_size(64); // one warp per row
-        dim3 grid_size((mi.max_nonzeros_per_row + block_size.x - 1)/block_size.x, mi.num_rows);
+    {   // ELLPACK: One thread per row
+        dim3 block_size(64);
+        dim3 grid_size((mi.num_rows+block_size.x-1)/block_size.x);
 
         // Copy the ELLPACK for the first two benchmarks; normal row major
         HC(hipMemcpy(d_ellpack.data,    ellpack.data,    num_elems * sizeof(double), hipMemcpyHostToDevice));
@@ -507,33 +476,7 @@ benchmark_ellpack(const matrix_market_t *mm,
 
         clock_gettime(CLOCK_MONOTONIC, &end_time);
 
-        log_execution("ELLPACK (GPU) (One block per row)", args.iterations, time_spent(start_time, end_time));
-
-        // Copy back the resulting vector to host.
-        HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
-
-        if (args.verbose) print_vector(y, mi);
-    }
-
-    {   // ELLPACK: One thread per row
-        dim3 block_size(64);
-        dim3 grid_size((mi.num_rows+block_size.x-1)/block_size.x);
-
-        // No copying from host to device is needed; this version uses the same data as the last one.
-
-        // Zero out the result vector
-        HC(hipMemset(d_y, 0, mi.num_rows*sizeof(double)));
-
-        clock_gettime(CLOCK_MONOTONIC, &start_time);
-
-        // Compute the sparse matrix-vector multiplication.
-        for (int i = 0; i < args.iterations; i++)
-            hipLaunchKernelGGL(spmv_ellpack_kernel2, grid_size, block_size, 0, 0, mi, d_ellpack, d_x, d_y);
-        hipDeviceSynchronize();
-
-        clock_gettime(CLOCK_MONOTONIC, &end_time);
-
-        log_execution("ELLPACK (GPU) (One thread per row)", args.iterations, time_spent(start_time, end_time));
+        log_execution("ELLPACK (GPU) (Row major)", args.iterations, time_spent(start_time, end_time));
 
         // Copy back the resulting vector to host.
         HC(hipMemcpy(y, d_y, mi.num_rows * sizeof(double), hipMemcpyDeviceToHost));
