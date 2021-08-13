@@ -4,6 +4,10 @@ spmv-hip
 Example program for computing a sparse matrix-vector multiplication with a
 matrix in the compressed sparse row (CSR) and ELLPACK formats.
 
+The program takes a Matrix Market file, and performs sparse matrix-vector
+multiplication with it and a vector of ones of the appropriate size. See Usage.
+
+
 Compiling on eX³
 ----------------
 

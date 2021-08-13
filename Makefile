@@ -49,4 +49,4 @@ spmv-hip-%: ${C_OBJ} src/spmv.hip.o
 clean:
 	$(RM) src/spmv.hip.o spmv-hip-nvidia spmv-hip-amd $(C_OBJ)
 
-.PHONY: all clean hip
+.PHONY: all amd nvidia
